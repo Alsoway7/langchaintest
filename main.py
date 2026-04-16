@@ -6,7 +6,6 @@ from rag import SUPPORTED_EXTENSIONS, load_documents, split_documents, answer_qu
 from table_query import answer_table_query, format_table_answer
 
 
-# 解析命令行参数，支持交互提问、dry-run、debug 和检索数量配置。
 def parse_args():
     parser = argparse.ArgumentParser(description="Local document RAG demo with LangChain and OpenAI.")
     parser.add_argument("question", nargs="?", help="Question to ask about files under data/.")
@@ -17,29 +16,12 @@ def parse_args():
     return parser.parse_args()
 
 
-# 程序入口：优先处理精确表格查询，否则执行 RAG 检索问答。
-def main():
-    args = parse_args()
-    settings = load_settings()
-    show_env_status(settings)
+def clean_console_input(value):
+    value = "".join(ch for ch in value if not 0xD800 <= ord(ch) <= 0xDFFF)
+    return value.lstrip("\ufeffï»¿ｻｿ").strip()
 
-    documents = load_documents(DATA_DIR)
-    chunks = split_documents(documents) if documents else []
-    print("Documents loaded:", len(documents))
-    print("Chunks created:", len(chunks))
-    print("Supported extensions:", ", ".join(sorted(SUPPORTED_EXTENSIONS)))
 
-    if args.dry_run:
-        return
-
-    question = args.question
-    if not question:
-        question = input("\n请输入你的问题: ").strip()
-
-    if not question:
-        print("No question provided.")
-        return
-
+def answer_once(question, args, settings, documents, chat_model=None, embeddings=None):
     table_result = answer_table_query(question, DATA_DIR)
     if table_result:
         print("\nQuestion:")
@@ -56,8 +38,10 @@ def main():
         print("No documents found. Add supported files under data/.")
         return
 
-    chat_model = build_chat_model(settings)
-    embeddings = build_embedding_model(settings)
+    if chat_model is None:
+        chat_model = build_chat_model(settings)
+    if embeddings is None:
+        embeddings = build_embedding_model(settings)
 
     result = answer_question(
         question,
@@ -97,6 +81,48 @@ def main():
             if document["chunk_start"] is not None:
                 print("chunk_start:", document["chunk_start"])
             print(preview)
+
+
+def main():
+    args = parse_args()
+    settings = load_settings()
+    show_env_status(settings)
+
+    documents = load_documents(DATA_DIR)
+    chunks = split_documents(documents) if documents else []
+    print("Documents loaded:", len(documents))
+    print("Chunks created:", len(chunks))
+    print("Supported extensions:", ", ".join(sorted(SUPPORTED_EXTENSIONS)))
+
+    if args.dry_run:
+        return
+
+    if args.question:
+        answer_once(args.question, args, settings, documents)
+        return
+
+    chat_model = None
+    embeddings = None
+    if settings.get("OPENAI_API_KEY") and documents:
+        chat_model = build_chat_model(settings)
+        embeddings = build_embedding_model(settings)
+
+    print("\nEnter a question. Type '退出', 'exit', 'quit', or 'q' to stop.")
+    while True:
+        try:
+            question = clean_console_input(input("\nQuestion: "))
+        except EOFError:
+            print("\nBye.")
+            return
+        if question.lower() in {"exit", "quit", "q"} or question == "退出":
+            print("Bye.")
+            return
+        if not question:
+            print("No question provided.")
+            continue
+
+        answer_once(question, args, settings, documents, chat_model, embeddings)
+        args.rebuild_index = False
 
 
 if __name__ == "__main__":
