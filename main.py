@@ -1,9 +1,18 @@
 import argparse
+import sys
 
 from config import DATA_DIR, INDEX_DIR, load_settings, show_env_status
 from llm_factory import build_chat_model, build_embedding_model
 from rag import SUPPORTED_EXTENSIONS, load_documents, split_documents, answer_question
+from sample_query import answer_sample_query, format_sample_answer
 from table_query import answer_table_query, format_table_answer
+from web_search import answer_from_web
+
+
+def configure_console_encoding():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def parse_args():
@@ -13,6 +22,8 @@ def parse_args():
     parser.add_argument("--rebuild-index", action="store_true", help="Force rebuilding the local vector index.")
     parser.add_argument("--debug", action="store_true", help="Print retrieved chunks used as answer context.")
     parser.add_argument("--k", type=int, default=8, help="Number of chunks to retrieve.")
+    parser.add_argument("--no-web", action="store_true", help="Disable web search fallback.")
+    parser.add_argument("--web-results", type=int, default=5, help="Number of web search results to use.")
     return parser.parse_args()
 
 
@@ -21,22 +32,135 @@ def clean_console_input(value):
     return value.lstrip("\ufeffï»¿ｻｿ").strip()
 
 
-def answer_once(question, args, settings, documents, chat_model=None, embeddings=None):
+def looks_like_follow_up(question):
+    normalized = question.lower().strip()
+    follow_up_terms = [
+        "它",
+        "这个",
+        "那个",
+        "上面",
+        "刚才",
+        "继续",
+        "呢",
+        "これ",
+        "それ",
+        "その",
+        "上",
+        "続き",
+        "it",
+        "that",
+        "this",
+        "those",
+        "them",
+        "above",
+        "previous",
+    ]
+    return len(normalized) <= 40 or any(term in normalized for term in follow_up_terms)
+
+
+def make_standalone_question(question, history, chat_model):
+    if not history or not looks_like_follow_up(question):
+        return question
+
+    previous = history[-1]
+    if chat_model is None:
+        return f"Previous question: {previous['question']}\nFollow-up question: {question}"
+
+    prompt = (
+        "Rewrite the follow-up question as a standalone search question. "
+        "Keep concrete identifiers such as ASV IDs, sample names, COI, gPlant, rbcL, species names, and numbers. "
+        "Do not answer. Return only the rewritten question.\n\n"
+        f"Previous question: {previous['question']}\n"
+        f"Previous answer: {previous['answer'][:1200]}\n"
+        f"Follow-up question: {question}"
+    )
+    try:
+        response = chat_model.invoke(prompt)
+        return response.content.strip() or question
+    except Exception:
+        return f"Previous question: {previous['question']}\nFollow-up question: {question}"
+
+
+def answer_needs_web(answer):
+    normalized = answer.lower()
+    phrases = [
+        "provided documents do not confirm",
+        "does not contain enough evidence",
+        "cannot be confirmed",
+        "not confirm",
+        "確認できません",
+        "提示されていない",
+        "无法确认",
+        "不能确认",
+        "没有足够",
+        "未提供",
+    ]
+    return any(phrase in normalized for phrase in phrases)
+
+
+def print_web_fallback(question, args, chat_model):
+    if args.no_web:
+        return None
+
+    print("\nWeb fallback:")
+    try:
+        web_result = answer_from_web(question, chat_model, max_results=args.web_results)
+    except Exception as exc:
+        print(f"web search unavailable: {exc}")
+        return None
+
+    print(web_result["answer"])
+    if web_result["sources"]:
+        print("\nWeb sources:")
+        for source in web_result["sources"]:
+            print("-", source)
+    return web_result
+
+
+def answer_once(question, args, settings, documents, chat_model=None, embeddings=None, original_question=None):
+    display_question = original_question or question
+
+    sample_result = answer_sample_query(question, DATA_DIR)
+    if sample_result:
+        answer = format_sample_answer(sample_result)
+        print("\nQuestion:")
+        print(display_question)
+        if display_question != question:
+            print("\nInterpreted question:")
+            print(question)
+        print("\nAnswer:")
+        print(answer)
+        return {"question": display_question, "search_question": question, "answer": answer}
+
     table_result = answer_table_query(question, DATA_DIR)
     if table_result:
+        answer = format_table_answer(table_result)
         print("\nQuestion:")
-        print(question)
+        print(display_question)
+        if display_question != question:
+            print("\nInterpreted question:")
+            print(question)
         print("\nAnswer:")
-        print(format_table_answer(table_result))
-        return
+        print(answer)
+        return {"question": display_question, "search_question": question, "answer": answer}
 
     if not settings.get("OPENAI_API_KEY"):
         print("Missing OPENAI_API_KEY. Add it to .env first.")
-        return
+        return None
 
     if not documents:
         print("No documents found. Add supported files under data/.")
-        return
+        if chat_model is None:
+            chat_model = build_chat_model(settings)
+        web_result = print_web_fallback(question, args, chat_model)
+        if web_result:
+            return {
+                "question": display_question,
+                "search_question": question,
+                "answer": web_result["answer"],
+                "web_result": web_result,
+            }
+        return None
 
     if chat_model is None:
         chat_model = build_chat_model(settings)
@@ -54,7 +178,10 @@ def answer_once(question, args, settings, documents, chat_model=None, embeddings
     )
 
     print("\nQuestion:")
-    print(question)
+    print(display_question)
+    if display_question != question:
+        print("\nInterpreted question:")
+        print(question)
     print("\nIndex:")
     print("rebuilt:", result["index_rebuilt"])
     print("documents:", result["documents_count"])
@@ -82,8 +209,24 @@ def answer_once(question, args, settings, documents, chat_model=None, embeddings
                 print("chunk_start:", document["chunk_start"])
             print(preview)
 
+    final_answer = result["answer"]
+    web_result = None
+    if answer_needs_web(result["answer"]):
+        web_result = print_web_fallback(question, args, chat_model)
+        if web_result:
+            final_answer = web_result["answer"]
+
+    return {
+        "question": display_question,
+        "search_question": question,
+        "answer": final_answer,
+        "local_answer": result["answer"],
+        "web_result": web_result,
+    }
+
 
 def main():
+    configure_console_encoding()
     args = parse_args()
     settings = load_settings()
     show_env_status(settings)
@@ -107,6 +250,7 @@ def main():
         chat_model = build_chat_model(settings)
         embeddings = build_embedding_model(settings)
 
+    history = []
     print("\nEnter a question. Type '退出', 'exit', 'quit', or 'q' to stop.")
     while True:
         try:
@@ -121,7 +265,19 @@ def main():
             print("No question provided.")
             continue
 
-        answer_once(question, args, settings, documents, chat_model, embeddings)
+        search_question = make_standalone_question(question, history, chat_model)
+        record = answer_once(
+            search_question,
+            args,
+            settings,
+            documents,
+            chat_model,
+            embeddings,
+            original_question=question,
+        )
+        if record:
+            history.append(record)
+            history = history[-5:]
         args.rebuild_index = False
 
 

@@ -97,9 +97,7 @@ def plan_query(question: str) -> QueryPlan:
         categories.extend(["knowledge", "tables", "reports"])
 
     if not markers:
-        markers.append("general")
-        if has_table_intent or (has_report_intent and not has_knowledge_intent):
-            markers.extend(["COI", "gPlant"])
+        markers.append("all")
 
     mode = "comparison" if asks_comparison and mentions_coi and mentions_gplant else "single"
 

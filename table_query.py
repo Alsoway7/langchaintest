@@ -37,10 +37,22 @@ def detect_markers(question: str) -> list[str]:
     return markers
 
 
+def infer_markers(question: str) -> list[str]:
+    markers = detect_markers(question)
+    if markers:
+        return markers
+    return ["COI", "gPlant"]
+
+
 # 从问题中提取所有 ASV 编号，例如 ASV_001、ASV_002。
 def detect_asv_ids(question: str) -> list[str]:
     matches = re.findall(r"ASV[_\-\s]?(\d+)", question, flags=re.IGNORECASE)
     return list(dict.fromkeys(f"ASV_{int(match):03d}" for match in matches))
+
+
+def detect_sample_ids(question: str) -> list[str]:
+    matches = re.findall(r"(?<![A-Za-z0-9_])r\d+-\d+[A-Za-z]?(?![A-Za-z0-9_])", question, flags=re.IGNORECASE)
+    return list(dict.fromkeys(matches))
 
 
 # 从问题中提取可能的拉丁物种名片段，例如 Procyon lotor。
@@ -49,6 +61,10 @@ def detect_species_name(question: str) -> str | None:
     if not match:
         return None
     return f"{match.group(1)} {match.group(2)}"
+
+
+def is_context_dependent_table_question(question: str) -> bool:
+    return any(term in question for term in ["次に", "最後に", "もとにして", "表」を"])
 
 
 # 从问题中提取“上位 5 件 / top 10”这类数量限制。
@@ -70,8 +86,8 @@ def detect_limit(question: str, default: int = 10) -> int:
 # 判断问题是否属于需要精确读表的查询。
 def should_use_table_query(question: str) -> bool:
     normalized = question.lower()
-    if not detect_markers(question):
-        return False
+    if detect_asv_ids(question) or detect_species_name(question) or detect_sample_ids(question):
+        return True
 
     terms = [
         "asv",
@@ -82,6 +98,22 @@ def should_use_table_query(question: str) -> bool:
         "相同性",
         "target",
         "blast",
+        "species",
+        "sample",
+        "count",
+        "most",
+        "top",
+        "detected",
+        "identified",
+        "reads",
+        "生物",
+        "物种",
+        "種類",
+        "検出",
+        "一番",
+        "最多",
+        "哪个",
+        "どれ",
         "生物種",
         "植物種",
         "検出",
@@ -175,6 +207,10 @@ def get_top_species(data_dir: Path, marker: str, limit: int = 10) -> list[dict]:
 
 
 # 返回 read 数最多的 ASV 记录。
+def table_has_sample(data_dir: Path, marker: str, sample_id: str) -> bool:
+    return any(sample_id in row["sample_reads"] for row in load_result_rows(data_dir, marker))
+
+
 def get_top_asvs(data_dir: Path, marker: str, limit: int = 10) -> list[dict]:
     rows = load_result_rows(data_dir, marker)
     return sorted(rows, key=lambda row: row["total_reads"], reverse=True)[:limit]
@@ -203,14 +239,20 @@ def answer_table_query(question: str, data_dir: Path) -> dict | None:
     if not should_use_table_query(question):
         return None
 
-    markers = detect_markers(question)
+    markers = infer_markers(question)
     asv_ids = detect_asv_ids(question)
+    sample_ids = detect_sample_ids(question)
     species_name = detect_species_name(question)
+    if is_context_dependent_table_question(question) and not (asv_ids or sample_ids or species_name):
+        return None
     limit = detect_limit(question)
     normalized = question.lower()
     results = []
 
     for marker in markers:
+        if sample_ids and not any(table_has_sample(data_dir, marker, sample_id) for sample_id in sample_ids):
+            continue
+
         if asv_ids:
             details = [
                 detail for asv_id in asv_ids

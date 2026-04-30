@@ -40,6 +40,10 @@ logging.getLogger("pypdf").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 
+def should_ignore_file(path: Path) -> bool:
+    return path.name in IGNORED_FILE_NAMES or path.name.startswith("~$")
+
+
 # 按常见编码读取普通文本文件，兼容 UTF-8 和日文 Windows 编码。
 def read_text_file(path: Path) -> str:
     for encoding in ("utf-8-sig", "utf-8", "cp932", "shift_jis"):
@@ -236,12 +240,16 @@ def infer_marker(relative_path: str) -> str:
 def load_documents(data_dir: Path) -> list[Document]:
     documents = []
     for path in sorted(data_dir.rglob("*")):
-        if path.name in IGNORED_FILE_NAMES:
+        if should_ignore_file(path):
             continue
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
 
-        text = extract_text(path).strip()
+        try:
+            text = extract_text(path).strip()
+        except Exception as exc:
+            warnings.warn(f"Skipping unreadable file {path}: {exc}", RuntimeWarning)
+            continue
         if not text:
             continue
 
@@ -325,7 +333,7 @@ def split_fasta_document(document: Document) -> list[Document]:
 def build_manifest(data_dir: Path) -> dict:
     files = []
     for path in sorted(data_dir.rglob("*")):
-        if path.name in IGNORED_FILE_NAMES:
+        if should_ignore_file(path):
             continue
         if not path.is_file() or path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
@@ -426,7 +434,7 @@ def build_or_load_vector_store(data_dir: Path, index_dir: Path, embeddings, rebu
 # 判断某个文档 chunk 是否符合 query planner 给出的 marker/category 范围。
 def document_matches_plan(document: Document, marker: str, category: str) -> bool:
     metadata = document.metadata
-    if marker != "all" and metadata.get("marker") != marker:
+    if marker not in {"all", "general"} and metadata.get("marker") != marker:
         return False
     if category != "all" and metadata.get("category") != category:
         return False
@@ -466,7 +474,9 @@ def search_with_plan(vector_store: InMemoryVectorStore, question: str, plan: Que
 
     if len(retrieved) < k:
         allowed_markers = set(plan.markers)
-        if allowed_markers != {"general"}:
+        if "all" in allowed_markers:
+            allowed_markers = {"general", "COI", "gPlant"}
+        elif allowed_markers != {"general"}:
             allowed_markers.add("general")
 
         candidates = vector_store.similarity_search(question, k=k * 4)
