@@ -3,9 +3,18 @@ import sys
 
 from config import DATA_DIR, INDEX_DIR, load_settings, show_env_status
 from llm_factory import build_chat_model, build_embedding_model
-from rag import SUPPORTED_EXTENSIONS, load_documents, split_documents, answer_question
-from sample_query import answer_sample_query, format_sample_answer
-from table_query import answer_table_query, format_table_answer
+from rag import (
+    SUPPORTED_EXTENSIONS,
+    compose_answer,
+    format_rag_entries,
+    gather_rag_chunks,
+    load_documents,
+    render_evidence_block,
+    split_documents,
+)
+from sample_query import format_sample_entries, gather_sample_data
+from sequence_query import format_sequence_entries, gather_sequence_data
+from table_query import format_table_entries, gather_table_data
 from web_search import answer_from_web
 
 
@@ -29,24 +38,32 @@ def parse_args():
 
 def clean_console_input(value):
     value = "".join(ch for ch in value if not 0xD800 <= ord(ch) <= 0xDFFF)
-    return value.lstrip("\ufeffï»¿ｻｿ").strip()
+    return value.lstrip("\ufeff茂禄驴锝伙娇").strip()
 
+
+def normalize_asv_ids(question):
+    import re
+    return re.sub(r"(?i)(?<![A-Za-z\d_])asv_?(\d+)(?![A-Za-z\d_])", lambda m: "ASV_" + m.group(1), question)
 
 def looks_like_follow_up(question):
     normalized = question.lower().strip()
     follow_up_terms = [
-        "它",
-        "这个",
-        "那个",
-        "上面",
-        "刚才",
-        "继续",
-        "呢",
         "これ",
         "それ",
+        "この",
         "その",
-        "上",
-        "続き",
+        "この表",
+        "その表",
+        "次に",
+        "最後に",
+        "もとにして",
+        "上の",
+        "前の",
+        "刚才",
+        "上面",
+        "这个",
+        "那个",
+        "继续",
         "it",
         "that",
         "this",
@@ -54,8 +71,10 @@ def looks_like_follow_up(question):
         "them",
         "above",
         "previous",
+        "next",
+        "lastly",
     ]
-    return len(normalized) <= 40 or any(term in normalized for term in follow_up_terms)
+    return len(normalized) <= 80 or any(term in normalized for term in follow_up_terms)
 
 
 def make_standalone_question(question, history, chat_model):
@@ -69,6 +88,8 @@ def make_standalone_question(question, history, chat_model):
     prompt = (
         "Rewrite the follow-up question as a standalone search question. "
         "Keep concrete identifiers such as ASV IDs, sample names, COI, gPlant, rbcL, species names, and numbers. "
+        "If the follow-up refers to a previous table or previous answer, explicitly carry over the sample ID, "
+        "the data source, and the requested transformation of that table. "
         "Do not answer. Return only the rewritten question.\n\n"
         f"Previous question: {previous['question']}\n"
         f"Previous answer: {previous['answer'][:1200]}\n"
@@ -88,12 +109,10 @@ def answer_needs_web(answer):
         "does not contain enough evidence",
         "cannot be confirmed",
         "not confirm",
-        "確認できません",
-        "提示されていない",
         "无法确认",
         "不能确认",
         "没有足够",
-        "未提供",
+        "not enough evidence",
     ]
     return any(phrase in normalized for phrase in phrases)
 
@@ -117,41 +136,62 @@ def print_web_fallback(question, args, chat_model):
     return web_result
 
 
-def answer_once(question, args, settings, documents, chat_model=None, embeddings=None, original_question=None):
+def answer_once(
+    question,
+    args,
+    settings,
+    documents,
+    chat_model=None,
+    embeddings=None,
+    original_question=None,
+    history=None,
+):
+    question = normalize_asv_ids(question)
     display_question = original_question or question
 
-    sample_result = answer_sample_query(question, DATA_DIR)
-    if sample_result:
-        answer = format_sample_answer(sample_result)
-        print("\nQuestion:")
-        print(display_question)
-        if display_question != question:
-            print("\nInterpreted question:")
-            print(question)
-        print("\nAnswer:")
-        print(answer)
-        return {"question": display_question, "search_question": question, "answer": answer}
+    if chat_model is None and settings.get("OPENAI_API_KEY"):
+        chat_model = build_chat_model(settings)
 
-    table_result = answer_table_query(question, DATA_DIR)
-    if table_result:
-        answer = format_table_answer(table_result)
-        print("\nQuestion:")
-        print(display_question)
-        if display_question != question:
-            print("\nInterpreted question:")
-            print(question)
-        print("\nAnswer:")
-        print(answer)
-        return {"question": display_question, "search_question": question, "answer": answer}
+    # 1. Gather structured evidence — every backend always tries; none short-circuits.
+    table_evidence = gather_table_data(question, DATA_DIR, chat_model=chat_model)
+    sequence_evidence = gather_sequence_data(question, DATA_DIR, history=history, chat_model=chat_model)
+    sample_evidence = gather_sample_data(question, DATA_DIR, chat_model=chat_model)
 
-    if not settings.get("OPENAI_API_KEY"):
-        print("Missing OPENAI_API_KEY. Add it to .env first.")
-        return None
+    # 2. Gather RAG chunks (always when LLM/index available).
+    rag_evidence = None
+    if settings.get("OPENAI_API_KEY") and documents:
+        if embeddings is None:
+            embeddings = build_embedding_model(settings)
+        rag_evidence = gather_rag_chunks(
+            question,
+            chat_model,
+            embeddings,
+            DATA_DIR,
+            INDEX_DIR,
+            k=args.k,
+            rebuild_index=args.rebuild_index,
+        )
 
-    if not documents:
-        print("No documents found. Add supported files under data/.")
+    # 3. Merge into a single numbered evidence list.
+    entries = []
+    entries.extend(format_table_entries(table_evidence))
+    entries.extend(format_sequence_entries(sequence_evidence))
+    entries.extend(format_sample_entries(sample_evidence))
+    if rag_evidence:
+        entries.extend(format_rag_entries(rag_evidence))
+
+    print("\nQuestion:")
+    print(display_question)
+    if display_question != question:
+        print("\nInterpreted question:")
+        print(question)
+
+    # 4. Compose final answer.
+    if not entries:
+        print("\nNo local evidence found.")
         if chat_model is None:
-            chat_model = build_chat_model(settings)
+            print("Missing OPENAI_API_KEY. Add it to .env first.")
+            return None
         web_result = print_web_fallback(question, args, chat_model)
         if web_result:
             return {
@@ -163,65 +203,52 @@ def answer_once(question, args, settings, documents, chat_model=None, embeddings
         return None
 
     if chat_model is None:
-        chat_model = build_chat_model(settings)
-    if embeddings is None:
-        embeddings = build_embedding_model(settings)
+        answer = "Missing OPENAI_API_KEY. Add it to .env first.\n\nGathered evidence:\n" + render_evidence_block(entries)
+    else:
+        answer = compose_answer(question, entries, chat_model)
 
-    result = answer_question(
-        question,
-        chat_model,
-        embeddings,
-        DATA_DIR,
-        INDEX_DIR,
-        k=args.k,
-        rebuild_index=args.rebuild_index,
-    )
+    print("\nEvidence sources:")
+    for index, entry in enumerate(entries, start=1):
+        print(f"  [{index}] {entry['kind']}: {entry['source']}")
 
-    print("\nQuestion:")
-    print(display_question)
-    if display_question != question:
-        print("\nInterpreted question:")
-        print(question)
-    print("\nIndex:")
-    print("rebuilt:", result["index_rebuilt"])
-    print("documents:", result["documents_count"])
-    if result["chunks_count"] is not None:
-        print("chunks:", result["chunks_count"])
-    print("\nQuery plan:")
-    print("markers:", ", ".join(result["query_plan"]["markers"]))
-    print("categories:", ", ".join(result["query_plan"]["categories"]))
-    print("mode:", result["query_plan"]["mode"])
+    if rag_evidence:
+        plan = rag_evidence["plan"]
+        index_info = rag_evidence["index_info"]
+        print("\nIndex:")
+        print("rebuilt:", index_info["rebuilt"])
+        print("documents:", index_info["documents_count"])
+        if index_info["chunks_count"] is not None:
+            print("chunks:", index_info["chunks_count"])
+        print("\nQuery plan:")
+        print("markers:", ", ".join(plan.markers))
+        print("categories:", ", ".join(plan.categories))
+        print("mode:", plan.mode)
+
     print("\nAnswer:")
-    print(result["answer"])
-    print("\nSources:")
-    for source in result["sources"]:
-        print("-", source)
+    print(answer)
 
     if args.debug:
-        print("\nRetrieved chunks:")
-        for index, document in enumerate(result["retrieved_documents"], start=1):
-            content = document["content"].replace("\n", " ")
-            preview = content[:700] + ("..." if len(content) > 700 else "")
-            print(f"\n[{index}] {document['source']}")
-            if document.get("marker") or document.get("category"):
-                print("marker/category:", document.get("marker"), "/", document.get("category"))
-            if document["chunk_start"] is not None:
-                print("chunk_start:", document["chunk_start"])
-            print(preview)
+        print("\nFull evidence dump:")
+        print(render_evidence_block(entries))
 
-    final_answer = result["answer"]
+    final_answer = answer
     web_result = None
-    if answer_needs_web(result["answer"]):
+    if answer and answer_needs_web(answer):
         web_result = print_web_fallback(question, args, chat_model)
         if web_result:
             final_answer = web_result["answer"]
+
+    sequence_context = None
+    if sequence_evidence and sequence_evidence.get("samples"):
+        sequence_context = {"sample_id": sequence_evidence["samples"][0]["requested_id"]}
 
     return {
         "question": display_question,
         "search_question": question,
         "answer": final_answer,
-        "local_answer": result["answer"],
+        "local_answer": answer,
         "web_result": web_result,
+        "sequence_context": sequence_context,
     }
 
 
@@ -241,7 +268,7 @@ def main():
         return
 
     if args.question:
-        answer_once(args.question, args, settings, documents)
+        answer_once(args.question, args, settings, documents, history=[])
         return
 
     chat_model = None
@@ -274,6 +301,7 @@ def main():
             chat_model,
             embeddings,
             original_question=question,
+            history=history,
         )
         if record:
             history.append(record)

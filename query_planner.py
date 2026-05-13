@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+from query_intent import infer_rag_query_plan
+
 
 @dataclass(frozen=True)
 class QueryPlan:
@@ -8,24 +10,16 @@ class QueryPlan:
     mode: str
 
 
-# 根据用户自然语言问题，自动判断应该优先检索哪些数据范围。
-def plan_query(question: str) -> QueryPlan:
+def _plan_query_heuristic(question: str) -> QueryPlan:
     normalized = question.lower()
     markers = []
     categories = []
 
     mentions_coi = "coi" in normalized
-    mentions_gplant = "gplant" in normalized or "rbc" in normalized or "rbcl" in normalized
+    mentions_gplant = any(term in normalized for term in ["gplant", "rbcl", "rbc"])
     asks_comparison = any(
         term in normalized
-        for term in [
-            "比較",
-            "違い",
-            "差",
-            "compare",
-            "comparison",
-            "difference",
-        ]
+        for term in ["compare", "comparison", "difference", "versus", "vs", "对比", "比较", "違い", "比較して"]
     )
 
     if mentions_coi:
@@ -35,49 +29,54 @@ def plan_query(question: str) -> QueryPlan:
 
     table_terms = [
         "blast",
-        "代表配列",
         "read",
-        "リード",
+        "reads",
         "asv",
-        "相同性",
+        "identity",
         "species",
-        "生物種",
-        "検出",
-        "植物種",
-        "リード数",
+        "sample",
+        "detected",
+        "top",
+        "count",
+        "物种",
+        "生物",
+        "检测",
+        "检出",
+        "配列",
+        "相同性",
     ]
     report_terms = [
-        "説明",
-        "納品",
         "quality",
-        "手順",
-        "ファイル",
-        "データ",
-        "qza",
-        "qzv",
+        "report",
         "fastq",
         "fasta",
         "xlsx",
         "tsv",
+        "qza",
+        "qzv",
+        "报告",
+        "文件",
+        "レポート",
     ]
     knowledge_terms = [
-        "論文",
-        "目的",
-        "背景",
-        "考察",
-        "概要",
+        "thesis",
+        "research",
+        "background",
+        "method",
+        "methods",
+        "conclusion",
+        "summary",
+        "study",
+        "paper",
+        "论文",
         "研究",
-        "調査",
-        "要約",
+        "背景",
         "方法",
+        "目的",
+        "考察",
         "結論",
     ]
-    sequence_terms = [
-        "fasta",
-        "配列",
-        "塩基",
-        "sequence",
-    ]
+    sequence_terms = ["fasta", "sequence", "配列", "塩基", "序列"]
 
     has_table_intent = any(term in normalized for term in table_terms)
     has_report_intent = any(term in normalized for term in report_terms)
@@ -95,14 +94,23 @@ def plan_query(question: str) -> QueryPlan:
 
     if not categories:
         categories.extend(["knowledge", "tables", "reports"])
-
     if not markers:
         markers.append("all")
 
     mode = "comparison" if asks_comparison and mentions_coi and mentions_gplant else "single"
-
     return QueryPlan(
         markers=tuple(dict.fromkeys(markers)),
         categories=tuple(dict.fromkeys(categories)),
         mode=mode,
     )
+
+
+def plan_query(question: str, chat_model=None) -> QueryPlan:
+    llm_plan = infer_rag_query_plan(question, chat_model)
+    if llm_plan:
+        return QueryPlan(
+            markers=tuple(llm_plan["markers"]),
+            categories=tuple(llm_plan["categories"]),
+            mode=llm_plan["mode"],
+        )
+    return _plan_query_heuristic(question)

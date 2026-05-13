@@ -1,13 +1,15 @@
 # Data layout
 
-This directory is organized by how each file should be used in the RAG and analysis workflow.
+All data files now live directly under this `data/` directory.
 
-- `01_knowledge_docs/`: thesis, field notes, slides, and other narrative documents.
-- `02_tables/`: structured result tables such as TSV, CSV, and Excel files.
-- `03_reports/`: HTML reports, delivery notes, logs, maps, and other text reports.
-- `04_sequences_fasta/`: representative FASTA sequences.
-- `05_raw_reads_fastq/`: raw FASTQ files. These are preserved but skipped by the RAG loader.
-- `06_qiime2_artifacts/`: QIIME2 `.qza` and `.qzv` files. These are preserved but skipped by the RAG loader unless exported to text/table formats.
-- `07_images/`: figures and images. These are preserved but skipped by the text RAG loader.
+To preserve provenance and avoid filename collisions, files that used to be in nested folders are flattened with `__`-joined prefixes, for example:
 
-`file_catalog.csv` records where each file came from and where it was moved.
+- `01_knowledge_docs__thesis_and_notes__...`
+- `02_tables__COI__...`
+- `04_sequences_fasta__gPlant__...`
+
+The app now detects category and marker from these flattened filenames.
+
+- `sample_id_mapping.csv`: optional explicit mapping between thesis sample IDs and sequence sample names.
+- `current_inventory.csv`: current flat-file inventory.
+- `file_catalog.csv`: provenance mapping from original locations to flattened filenames.

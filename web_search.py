@@ -8,6 +8,26 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
 
+def is_blast_only_question(question: str) -> bool:
+    """Return True only when the question explicitly asks to use external NCBI BLAST.
+    Questions about local BLAST results (学名/植物種 via Excel) should NOT be blocked here —
+    those are handled by the table/sequence backends before web_search is even called.
+    """
+    normalized = question.lower()
+    explicit_external = [
+        "ncbi blast",
+        "blast.ncbi",
+        "ncbi に",
+        "ncbi で",
+        "ncbiで",
+        "ncbiに",
+        "online blast",
+        "ウェブblast",
+        "web blast",
+    ]
+    return any(term in normalized for term in explicit_external)
+
+
 class DuckDuckGoHTMLParser(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -124,6 +144,19 @@ def build_web_answer_chain(chat_model):
 
 
 def answer_from_web(question: str, chat_model, max_results: int = 5) -> dict:
+    if is_blast_only_question(question):
+        return {
+            "answer": (
+                "This question is restricted to the NCBI BLASTN site "
+                "(https://blast.ncbi.nlm.nih.gov/Blast.cgi?PROGRAM=blastn&PAGE_TYPE=BlastSearch&LINK_LOC=blasthome). "
+                "Generic web search is disabled for this query."
+            ),
+            "sources": [
+                "https://blast.ncbi.nlm.nih.gov/Blast.cgi?PROGRAM=blastn&PAGE_TYPE=BlastSearch&LINK_LOC=blasthome"
+            ],
+            "results": [],
+        }
+
     results = search_web(question, max_results=max_results)
     for result in results:
         result["url"] = clean_result_url(result["url"])

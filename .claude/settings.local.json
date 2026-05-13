@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./venv/Scripts/python.exe -c ' *)",
+      "Bash(./venv/Scripts/python.exe main.py \"「4_相同性が高い生物種リスト\\(BLAST結果10位まで\\)」と書かれているファイル名のExcelファイルを参照して、r58-240918S のリード数の合計をそれぞれ記載してください。\" --debug)",
+      "Bash(./venv/Scripts/python.exe main.py \"「4_相同性が高い生物種リスト\\(BLAST結果10位まで\\)」と書かれているファイル名のExcelファイルを参照して、r58-240918S のリード数の合計をそれぞれ記載してください。\")",
+      "Bash(./venv/Scripts/python.exe main.py \"この研究では蜂蜜から何種類くらいの植物が検出されたのか、ざっくり教えて\")"
+    ]
+  }
+}

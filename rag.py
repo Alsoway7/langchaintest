@@ -10,6 +10,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.vectorstores import InMemoryVectorStore
 
+from data_access import infer_category_from_path, infer_marker_from_path
 from query_planner import QueryPlan, plan_query
 
 
@@ -34,7 +35,33 @@ IGNORED_FILE_NAMES = {
 
 VECTOR_STORE_PATH = "vectorstore.json"
 MANIFEST_PATH = "manifest.json"
-INDEX_VERSION = 4
+INDEX_VERSION = 5
+
+
+# 给 chunk 文本拼一行可读的元信息头，使 embedding 能感知文件类别和来源。
+def _chunk_header(metadata: dict, extra: dict | None = None) -> str:
+    category = metadata.get("category")
+    marker = metadata.get("marker")
+    source = metadata.get("source")
+
+    descriptors = []
+    if category and category != "other":
+        descriptors.append(category)
+    if marker and marker != "general":
+        descriptors.append(f"{marker} marker")
+
+    head = "Document"
+    if descriptors:
+        head += " (" + ", ".join(descriptors) + ")"
+    if source:
+        head += f": {source}"
+
+    if extra:
+        extras = [f"{key}={value}" for key, value in extra.items() if value not in (None, "")]
+        if extras:
+            head += " | " + " | ".join(extras)
+
+    return head + "\n"
 
 logging.getLogger("pypdf").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
@@ -214,26 +241,12 @@ def extract_text(path: Path) -> str:
 
 # 根据整理后的目录名推断文档类别：论文、表格、报告或序列。
 def infer_category(relative_path: str) -> str:
-    top_level = relative_path.split("\\", 1)[0].split("/", 1)[0]
-    if top_level.startswith("01_knowledge_docs"):
-        return "knowledge"
-    if top_level.startswith("02_tables"):
-        return "tables"
-    if top_level.startswith("03_reports"):
-        return "reports"
-    if top_level.startswith("04_sequences_fasta"):
-        return "sequences"
-    return "other"
+    return infer_category_from_path(Path(relative_path))
 
 
 # 根据路径推断文档属于 COI、gPlant，还是通用资料。
 def infer_marker(relative_path: str) -> str:
-    path = relative_path.replace("/", "\\")
-    if "\\COI\\" in path or path.endswith("\\COI") or "\\COI-" in path:
-        return "COI"
-    if "\\gPlant\\" in path or path.endswith("\\gPlant") or "rbcL" in path:
-        return "gPlant"
-    return "general"
+    return infer_marker_from_path(Path(relative_path))
 
 
 # 扫描 data 目录，把支持的文件加载成 LangChain Document。
@@ -292,7 +305,8 @@ def split_table_document(
 
         metadata = dict(document.metadata)
         metadata["row_start"] = start + 1
-        chunk_text = "\n".join([header] + row_block)
+        body = "\n".join([header] + row_block)
+        chunk_text = _chunk_header(metadata, {"row_start": metadata["row_start"]}) + body
         chunks.append(Document(page_content=chunk_text, metadata=metadata))
 
     return chunks
@@ -311,7 +325,8 @@ def split_fasta_document(document: Document) -> list[Document]:
         sequence = "".join(current_lines)
         metadata = dict(document.metadata)
         metadata["sequence_id"] = current_header[1:].split()[0]
-        content = f"{current_header}\n{sequence}"
+        body = f"{current_header}\n{sequence}"
+        content = _chunk_header(metadata, {"sequence_id": metadata["sequence_id"]}) + body
         chunks.append(Document(page_content=content, metadata=metadata))
 
     for line in document.page_content.splitlines():
@@ -376,12 +391,13 @@ def split_documents(
 
         text = document.page_content
         for start in range(0, len(text), step):
-            chunk_text = text[start:start + chunk_size].strip()
-            if not chunk_text:
+            body = text[start:start + chunk_size].strip()
+            if not body:
                 continue
 
             metadata = dict(document.metadata)
             metadata["chunk_start"] = start
+            chunk_text = _chunk_header(metadata, {"chunk_start": start}) + body
             chunks.append(Document(page_content=chunk_text, metadata=metadata))
 
     return chunks
@@ -431,35 +447,55 @@ def build_or_load_vector_store(data_dir: Path, index_dir: Path, embeddings, rebu
     }
 
 
-# 判断某个文档 chunk 是否符合 query planner 给出的 marker/category 范围。
-def document_matches_plan(document: Document, marker: str, category: str) -> bool:
-    metadata = document.metadata
-    if marker not in {"all", "general"} and metadata.get("marker") != marker:
-        return False
-    if category != "all" and metadata.get("category") != category:
-        return False
-    return True
+# 让 LLM 把问题改写成几个不同角度的检索 query，提高召回。无 LLM 时回退原问题。
+def expand_queries(question: str, chat_model, n: int = 2) -> list[str]:
+    if chat_model is None or n <= 0:
+        return [question]
+
+    prompt = (
+        f"Rewrite the following question into {n} alternative search queries. "
+        "Each rewrite should explore a different angle, synonym, or level of specificity, "
+        "while keeping concrete identifiers (sample IDs, ASV IDs, species names, "
+        "marker names like COI / gPlant / rbcL) unchanged. "
+        "Output one query per line. No numbering, no quotes, no explanation.\n\n"
+        f"Question: {question}"
+    )
+    try:
+        response = chat_model.invoke(prompt)
+    except Exception:
+        return [question]
+
+    text = getattr(response, "content", None) or str(response)
+    rewrites = []
+    for line in text.splitlines():
+        cleaned = line.strip().lstrip("-•·*0123456789.) ").strip()
+        if cleaned and cleaned != question and cleaned not in rewrites:
+            rewrites.append(cleaned)
+        if len(rewrites) >= n:
+            break
+    return [question] + rewrites
 
 
-# 根据 query plan 做多路检索，并对重复 chunk 去重。
-def search_with_plan(vector_store: InMemoryVectorStore, question: str, plan: QueryPlan, k: int):
-    retrieved = []
-    seen = set()
-    per_route_k = max(2, k)
+# 在统一的候选池中按 RRF 合并多 query 的结果，并对 plan 偏好做软加权。
+def search_with_plan(
+    vector_store: InMemoryVectorStore,
+    question: str,
+    plan: QueryPlan,
+    k: int,
+    chat_model=None,
+):
+    queries = expand_queries(question, chat_model)
+    pool_size = max(k * 4, 30)
 
-    routes = []
-    for marker in plan.markers:
-        for category in plan.categories:
-            routes.append((marker, category))
+    rrf_scores: dict[tuple, float] = {}
+    doc_lookup: dict[tuple, Document] = {}
 
-    for marker, category in routes:
-        candidates = vector_store.similarity_search(question, k=per_route_k * 3)
-        route_hits = [
-            document for document in candidates
-            if document_matches_plan(document, marker, category)
-        ][:per_route_k]
-
-        for document in route_hits:
+    for query in queries:
+        try:
+            candidates = vector_store.similarity_search(query, k=pool_size)
+        except Exception:
+            continue
+        for rank, document in enumerate(candidates):
             key = (
                 document.metadata.get("source"),
                 document.metadata.get("chunk_start"),
@@ -467,39 +503,38 @@ def search_with_plan(vector_store: InMemoryVectorStore, question: str, plan: Que
                 document.metadata.get("sequence_id"),
                 document.page_content[:120],
             )
-            if key in seen:
-                continue
-            seen.add(key)
-            retrieved.append(document)
+            rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (60 + rank)
+            doc_lookup.setdefault(key, document)
 
-    if len(retrieved) < k:
-        allowed_markers = set(plan.markers)
-        if "all" in allowed_markers:
-            allowed_markers = {"general", "COI", "gPlant"}
-        elif allowed_markers != {"general"}:
-            allowed_markers.add("general")
+    if not rrf_scores:
+        return []
 
-        candidates = vector_store.similarity_search(question, k=k * 4)
-        for document in candidates:
-            marker = document.metadata.get("marker")
-            if marker not in allowed_markers:
-                continue
+    allowed_markers = set(plan.markers)
+    if "all" in allowed_markers:
+        allowed_markers = {"COI", "gPlant", "general"}
+    else:
+        allowed_markers.add("general")
+    plan_categories = set(plan.categories)
 
-            key = (
-                document.metadata.get("source"),
-                document.metadata.get("chunk_start"),
-                document.metadata.get("row_start"),
-                document.metadata.get("sequence_id"),
-                document.page_content[:120],
-            )
-            if key in seen:
-                continue
-            seen.add(key)
-            retrieved.append(document)
-            if len(retrieved) >= k:
-                break
+    boosted = []
+    for key, base_score in rrf_scores.items():
+        document = doc_lookup[key]
+        marker = document.metadata.get("marker", "")
+        category = document.metadata.get("category", "")
 
-    return retrieved[:max(k, len(plan.markers) * len(plan.categories) * 2)]
+        bonus = 0.0
+        if marker in allowed_markers:
+            bonus += 0.04
+        if category in plan_categories:
+            bonus += 0.03
+        # 论文 / 笔记类内容对几乎所有问题都有背景价值，给一点常驻偏置。
+        if category == "knowledge":
+            bonus += 0.015
+
+        boosted.append((base_score + bonus, document))
+
+    boosted.sort(key=lambda item: -item[0])
+    return [document for _, document in boosted[:k]]
 
 
 # 把检索到的 chunks 组装成提供给 LLM 的上下文文本。
@@ -517,21 +552,25 @@ def build_rag_chain(chat_model):
         [
             (
                 "system",
-                "You are a strict document-grounded answer writer. "
-                "Use only the provided context as evidence. "
-                "Do not use prior knowledge, general scientific knowledge, assumptions, or outside facts. "
-                "Every factual statement must be directly supported by the context. "
-                "If the context does not contain enough evidence to answer, say that the provided documents do not confirm it. "
-                "Do not infer species, methods, conclusions, numbers, or relationships unless they are explicitly present in the context. "
+                "You are a careful, document-grounded research assistant. "
+                "Use the provided context as your primary source of truth. "
+                "You may synthesize and connect information across multiple context entries, "
+                "and you may rephrase, summarize, or reorganize what is in the context. "
+                "However, do not introduce facts, numbers, names, species, methods, or conclusions "
+                "that are not present in the context. "
+                "If the context only partially answers the question, give the partial answer "
+                "and clearly state which parts are unclear or missing — "
+                "do not refuse outright when useful partial information exists. "
+                "Only say the documents do not confirm something when the context truly contains no relevant information. "
                 "Answer in the same language as the user's question. "
-                "Cite the supporting source bracket number for each factual claim.",
+                "Cite supporting context entries by bracket number, e.g. [1], [2].",
             ),
             (
                 "human",
                 "Context:\n{context}\n\n"
                 "Question: {question}\n\n"
-                "Before answering, check whether the answer is explicitly supported by the context. "
-                "If not, state that it cannot be confirmed from the provided documents.",
+                "Synthesize a clear, helpful answer from the context. "
+                "Prefer giving a partial answer with explicit gaps over refusing entirely.",
             ),
         ]
     )
@@ -548,10 +587,10 @@ def answer_question(
     k: int = 4,
     rebuild_index: bool = False,
 ):
-    plan = plan_query(question)
+    plan = plan_query(question, chat_model=chat_model)
     index = build_or_load_vector_store(data_dir, index_dir, embeddings, rebuild=rebuild_index)
     vector_store = index["vector_store"]
-    retrieved_docs = search_with_plan(vector_store, question, plan, k=k)
+    retrieved_docs = search_with_plan(vector_store, question, plan, k=k, chat_model=chat_model)
 
     chain = build_rag_chain(chat_model)
     answer = chain.invoke(
@@ -590,3 +629,98 @@ def answer_question(
         "documents_count": index["documents_count"],
         "chunks_count": index["chunks_count"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Gather + compose pipeline (replaces the if/elif routing in main.py)
+# ---------------------------------------------------------------------------
+
+
+# 从向量库取回 RAG 候选片段，但不直接生成答案。
+def gather_rag_chunks(
+    question: str,
+    chat_model,
+    embeddings,
+    data_dir: Path,
+    index_dir: Path,
+    k: int = 8,
+    rebuild_index: bool = False,
+):
+    plan = plan_query(question, chat_model=chat_model)
+    index = build_or_load_vector_store(data_dir, index_dir, embeddings, rebuild=rebuild_index)
+    vector_store = index["vector_store"]
+    retrieved_docs = search_with_plan(vector_store, question, plan, k=k, chat_model=chat_model)
+    return {
+        "plan": plan,
+        "retrieved_docs": retrieved_docs,
+        "index_info": index,
+    }
+
+
+# 把 RAG 返回的 chunks 转换成 evidence 条目。
+def format_rag_entries(rag_evidence) -> list[dict]:
+    if not rag_evidence:
+        return []
+    entries = []
+    for document in rag_evidence["retrieved_docs"]:
+        entries.append(
+            {
+                "kind": "rag",
+                "source": document.metadata.get("source", "unknown"),
+                "text": document.page_content,
+            }
+        )
+    return entries
+
+
+# 把所有来源的 evidence 拼成统一编号的文本块，给 composer 用。
+def render_evidence_block(entries: list[dict]) -> str:
+    if not entries:
+        return "(no evidence collected)"
+    parts = []
+    for index, entry in enumerate(entries, start=1):
+        header = f"[{index}] kind={entry['kind']} | source={entry['source']}"
+        parts.append(f"{header}\n{entry['text']}")
+    return "\n\n".join(parts)
+
+
+# Composer：拿到所有 gather 出来的证据（结构化 + RAG），让 LLM 写一份最终答案。
+def build_compose_chain(chat_model):
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                "You are a careful, document-grounded research assistant. "
+                "The user's question has been routed through several backends, and the system has "
+                "gathered evidence below from structured analysis tables, FASTA / BLAST data, "
+                "sample metadata from thesis / field documents, and retrieved document chunks. "
+                "Each evidence entry is numbered [N] with kind and source. "
+                "\n\n"
+                "Write a single coherent answer in the same language as the user's question. "
+                "Use ONLY the evidence below. Do not invent facts not present in it. "
+                "When a structured-table evidence entry says a sample / ASV / species is not in a file, "
+                "state that fact directly using the column lists or available items shown — "
+                "do not refuse to answer. "
+                "When evidence is partial, give the partial answer and state the gaps explicitly. "
+                "Cite supporting evidence by bracket number, e.g. [1], [2], where applicable. "
+                "If the evidence is genuinely unrelated to the question, say so plainly.",
+            ),
+            (
+                "human",
+                "Question: {question}\n\nEvidence:\n{evidence}",
+            ),
+        ]
+    )
+    return prompt | chat_model | StrOutputParser()
+
+
+def compose_answer(question: str, entries: list[dict], chat_model) -> str | None:
+    if chat_model is None:
+        return None
+    chain = build_compose_chain(chat_model)
+    return chain.invoke(
+        {
+            "question": question,
+            "evidence": render_evidence_block(entries),
+        }
+    )
