@@ -702,64 +702,85 @@ def format_sequence_answer(result: dict) -> str:
     if result["type"] == "blast_table":
         label = _display_sample_label(result, language)
         if language == "ja":
-            lines = [
-                f"{label} の ASV と、それぞれに対応する植物種（学名）の上位10位です。",
-                f"fasta: {result['fasta_path']}",
-                f"BLAST source: {result['blast_source']}",
-                "",
-                "| ASV番号 | リード数の割合（%） | 植物種（学名）上位10位 |",
-                "|---|---:|---|",
-            ]
-            for row in result["rows"]:
-                species = [hit["target"] for hit in row["top_hits"][:10]]
-                lines.append(
-                    f"| {row['asv_id']} | {row['ratio_percent'] if row['ratio_percent'] is not None else ''} | "
-                    f"{'<br>'.join(species)} |"
-                )
-            return "\n".join(lines)
+            header = f"{label} の ASV と、それぞれに対応する植物種（学名）の上位10位です。"
+            col_headers = "| ASV番号 | リード数の割合（%） | 植物種（学名）上位10位 |"
+        elif language == "zh":
+            header = f"{label} 各 ASV 对应的生物物种（学名）前10位。"
+            col_headers = "| ASV 编号 | reads 占比（%） | 生物物种（学名）前10位 |"
+        else:
+            header = f"Top-10 BLAST species for each ASV in {label}."
+            col_headers = "| ASV ID | Reads ratio (%) | Top-10 species (scientific name) |"
+        lines = [
+            header,
+            f"fasta: {result['fasta_path']}",
+            f"BLAST source: {result['blast_source']}",
+            "",
+            col_headers,
+            "|---|---:|---|",
+        ]
+        for row in result["rows"]:
+            species = [hit["target"] for hit in row["top_hits"][:10]]
+            lines.append(
+                f"| {row['asv_id']} | {row['ratio_percent'] if row['ratio_percent'] is not None else ''} | "
+                f"{'<br>'.join(species)} |"
+            )
+        return "\n".join(lines)
 
     if result["type"] == "blast_top1_table":
         label = _display_sample_label(result, language)
         if language == "ja":
-            lines = [
-                f"{label} の ASV と、それぞれに対応する植物種（学名）の上位1位です。",
-                f"fasta: {result['fasta_path']}",
-                f"BLAST source: {result['blast_source']}",
-                "",
-                "| ASV番号 | リード数の割合（%） | 植物種（学名）上位1位 |",
-                "|---|---:|---|",
-            ]
-            for row in result["rows"]:
-                top1 = row["top_hits"][0]["target"] if row["top_hits"] else ""
-                lines.append(
-                    f"| {row['asv_id']} | {row['ratio_percent'] if row['ratio_percent'] is not None else ''} | {top1} |"
-                )
-            return "\n".join(lines)
+            header = f"{label} の ASV と、それぞれに対応する植物種（学名）の上位1位です。"
+            col_headers = "| ASV番号 | リード数の割合（%） | 植物種（学名）上位1位 |"
+        elif language == "zh":
+            header = f"{label} 各 ASV 对应的生物物种（学名）第1位。"
+            col_headers = "| ASV 编号 | reads 占比（%） | 生物物种（学名）第1位 |"
+        else:
+            header = f"Top-1 BLAST species for each ASV in {label}."
+            col_headers = "| ASV ID | Reads ratio (%) | Top-1 species (scientific name) |"
+        lines = [
+            header,
+            f"fasta: {result['fasta_path']}",
+            f"BLAST source: {result['blast_source']}",
+            "",
+            col_headers,
+            "|---|---:|---|",
+        ]
+        for row in result["rows"]:
+            top1 = row["top_hits"][0]["target"] if row["top_hits"] else ""
+            lines.append(
+                f"| {row['asv_id']} | {row['ratio_percent'] if row['ratio_percent'] is not None else ''} | {top1} |"
+            )
+        return "\n".join(lines)
 
     if result["type"] == "blast_grouped_species_table":
         label = _display_sample_label(result, language)
         if language == "ja":
-            lines = [
-                f"{label} について、同じ植物種（学名）ごとにまとめた表です。",
-                f"fasta: {result['fasta_path']}",
-                f"BLAST source: {result['blast_source']}",
-                "",
-                "| 植物種（学名） | 含まれるASV番号 | リード数の合計値（%） |",
-                "|---|---|---:|",
-            ]
-            for row in result["grouped_rows"]:
-                lines.append(f"| {row['species_name']} | {', '.join(row['asv_ids'])} | {row['ratio_sum']} |")
-            return "\n".join(lines)
+            header = f"{label} について、同じ植物種（学名）ごとにまとめた表です。"
+            col_headers = "| 植物種（学名） | 含まれるASV番号 | リード数の合計値（%） |"
+        elif language == "zh":
+            header = f"{label} 按生物物种（学名）汇总的表格。"
+            col_headers = "| 生物物种（学名） | 包含的 ASV 编号 | reads 占比合计（%） |"
+        else:
+            header = f"Species-grouped BLAST table for {label}."
+            col_headers = "| Species (scientific name) | ASV IDs | Reads ratio sum (%) |"
+        lines = [
+            header,
+            f"fasta: {result['fasta_path']}",
+            f"BLAST source: {result['blast_source']}",
+            "",
+            col_headers,
+            "|---|---|---:|",
+        ]
+        for row in result["grouped_rows"]:
+            lines.append(f"| {row['species_name']} | {', '.join(row['asv_ids'])} | {row['ratio_sum']} |")
+        return "\n".join(lines)
 
     if result["type"] == "compare_species_sets":
         left_name = _display_sample_label(result["left"], language)
         right_name = _display_sample_label(result["right"], language)
         if language == "ja":
-            lines = [
-                f"{left_name} と {right_name} の比較です。",
-                "",
-                "共通して見られた植物種（学名）:",
-            ]
+            lines = [f"{left_name} と {right_name} の比較です。", ""]
+            lines.append("共通して見られた植物種（学名）:")
             lines.extend([f"- {name}" for name in result["shared_species"]] or ["- なし"])
             lines.append("")
             lines.append(f"{left_name} のみに見られた植物種（学名）:")
@@ -767,6 +788,26 @@ def format_sequence_answer(result: dict) -> str:
             lines.append("")
             lines.append(f"{right_name} のみに見られた植物種（学名）:")
             lines.extend([f"- {name}" for name in result["only_right_species"]] or ["- なし"])
-            return "\n".join(lines)
+        elif language == "zh":
+            lines = [f"{left_name} 与 {right_name} 的比较。", ""]
+            lines.append("共同检出的生物物种（学名）：")
+            lines.extend([f"- {name}" for name in result["shared_species"]] or ["- 无"])
+            lines.append("")
+            lines.append(f"仅在 {left_name} 中检出的生物物种（学名）：")
+            lines.extend([f"- {name}" for name in result["only_left_species"]] or ["- 无"])
+            lines.append("")
+            lines.append(f"仅在 {right_name} 中检出的生物物种（学名）：")
+            lines.extend([f"- {name}" for name in result["only_right_species"]] or ["- 无"])
+        else:
+            lines = [f"Comparison: {left_name} vs {right_name}.", ""]
+            lines.append("Species found in both:")
+            lines.extend([f"- {name}" for name in result["shared_species"]] or ["- (none)"])
+            lines.append("")
+            lines.append(f"Species only in {left_name}:")
+            lines.extend([f"- {name}" for name in result["only_left_species"]] or ["- (none)"])
+            lines.append("")
+            lines.append(f"Species only in {right_name}:")
+            lines.extend([f"- {name}" for name in result["only_right_species"]] or ["- (none)"])
+        return "\n".join(lines)
 
     return ""

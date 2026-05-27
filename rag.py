@@ -130,12 +130,10 @@ def read_xlsx_file(path: Path) -> str:
     parts = []
     for sheet in workbook.worksheets:
         rows = list(sheet.iter_rows(values_only=True))
+        parts.append(f"[sheet: {sheet.title}]")
         summary = summarize_blast_rows(rows)
         if summary:
-            parts.append(f"[sheet: {sheet.title}]")
             parts.append(summary)
-
-        parts.append(f"[sheet: {sheet.title}]")
         for row in rows:
             values = [str(value) for value in row if value is not None]
             if values:

@@ -1,0 +1,503 @@
+<!-- saved from url=(0022)http://internet.e-mail -->
+<!-- saved from url=(0022)http://internet.e-mail -->
+<?xml version="1.0" encoding="Shift_JIS"?>
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="ja" lang="ja">
+
+<head>
+	<meta http-equiv="Content-Language" content="ja">
+	<meta http-equiv="Content-Type" content="text/html; charset=shift_jis" />
+	<meta http-equiv="Content-Style-Type" content="text/css" />
+	<meta http-equiv="Content-Script-Type" content="text/javascript" />
+	<meta name="description" content="ReadMe" />
+
+	<title>納品データにつきまして＜生物技研＞</title>
+
+    <style type="text/css">
+    <!--
+    .t01 { font-weight;bold; }
+    .tbl01 { display;table;margin:0px; }
+	.tbl01_tr { display:table-row; }
+	.tbl01_name { display:table-cell; width:130px;padding:15px; }
+	.tbl01_data { display:table-cell; text-align:left; }
+	.tbl01_td { display:table-cell; vertical-align:middle;  }
+    .line01 { width:780px;border-top:2px dashed #cccccc;margin-bottom:15px; }
+    .tbl02 { padding:10px; }
+    -->
+    </style>
+    
+</head>
+  
+<body>  
+<div width="800" style="width:800px;border:1px solid grey;margin:10px;;padding:10px;font-size:0.9em;">
+
+<img src="logo.jpg" alt="SEIBUTSUGIKEN" width="120" />
+
+<br />
+<center><h2>FASTQ形式データと品質コード</h2></center>
+<br />
+<br />
+<br />
+<div class="line01"></div>
+
+<strong>■ FASTQ形式データ</strong><br /><br />
+FASTQ形式は、以下のように4行で1配列(リード)の情報を示しています。<br /><br />
+
+(1行目)	@SEQ_ID<br />
+(2行目)	GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT<br />
+(3行目)	+<br />
+(4行目)	!''*((((***+))%%%++)(%%%%).1***-+*''))**55CCF>>>>>>CCCCCCC65<br />
+<br />
+1行目: @で必ず始まり、@以降がこの配列の名称を表しています。<br />
+2行目: 塩基配列を表しています。<br />
+3行目: +で必ず始まります。この行はそれ以外に意味はありません。<br />
+4行目: 2行目の塩基の品質を塩基ごとにASCIIコードで表しています。詳細は下をご覧ください。<br />
+<br />
+<br />
+
+<div class="line01"></div>
+
+<strong>■ 品質コードについて</strong><br /><br />
+4行目のASCIIコード(品質コード)は、以下のような品質スコアと配列正確度を示しております。使用する機器によって、以下のように例外的なスコア表記を示すので、ご注意ください。<br /><br />
+
+※ NextSeq1000 (Illumina)<br />
+独自の品質スコアを採用しており、*(ベースコール精度～94%)と5(～99.7%)、C(～99.96%)の3つのスコアのみです。<br /><br />
+※ Revio (Pacbio)<br />
+各範囲の品質スコアは1つのコードに置き換わります(Q40以上は、すべて「I」に置き換わります)。<br />
+
+<br />
+<br />
+<style>
+table {
+	border-collapse: collapse;
+	width: 100%;
+}
+th {
+	border: solid 1px #666666;
+	color: #000000;
+	background-color: #ffffff;
+	
+}
+td {
+	border: solid 1px #666666;
+	color: #000000;
+	background-color: #ffffff;
+	text-align: center;
+}
+</style>
+<table>
+	<tr>
+		<th>Revio</th>
+		<th>Revio以外</th>
+		<th rowspan="2">品質スコア(Q)</th>
+		<th rowspan="2">配列正確度[%]</th>
+		<th>Revio</td>
+		<th>Revio以外</td>
+		<th rowspan="2">品質スコア(Q)</th>
+		<th rowspan="2">配列正確度[%]</th>
+	</tr>
+	<tr>
+		<th>ASCIIコード</th>
+		<th>ASCIIコード</th>
+		<th>ASCIIコード</th>
+		<th>ASCIIコード</th>
+	</tr>
+	<tr>
+		<td rowspan="7">$</td>
+		<td>!</td>
+		<td>0</td>
+		<td>0.0000000000</td>
+		<td rowspan="47">I</td>
+		<td>P</td>
+		<td>47</td>
+		<td>0.9999800474</td>
+	</tr>
+	<tr>
+		<td>"</td>
+		<td>1</td>
+		<td>0.2056717653</td>
+		<td>Q</td>
+		<td>48</td>
+		<td>0.9999841511</td>
+	</tr>
+	<tr>
+		<td>#</td>
+		<td>2</td>
+		<td>0.3690426555</td>
+		<td>R</td>
+		<td>49</td>
+		<td>0.9999874107</td>
+	</tr>
+	<tr>
+		<td>$</td>
+		<td>3</td>
+		<td>0.4988127664</td>
+		<td>S</td>
+		<td>50</td>
+		<td>0.9999900000</td>
+	</tr>
+	<tr>
+		<td>%</td>
+		<td>4</td>
+		<td>0.6018928294</td>
+		<td>T</td>
+		<td>51</td>
+		<td>0.9999920567</td>
+	</tr>
+	<tr>
+		<td>&amp;</td>
+		<td>5</td>
+		<td>0.6837722340</td>
+		<td>U</td>
+		<td>52</td>
+		<td>0.9999936904</td>
+	</tr>
+	<tr>
+		<td>'</td>
+		<td>6</td>
+		<td>0.7488113568</td>
+		<td>V</td>
+		<td>53</td>
+		<td>0.9999949881</td>
+	</tr>
+	<tr>
+		<td rowspan="7">+</td>
+		<td>(</td>
+		<td>7</td>
+		<td>0.8004737685</td>
+		<td>W</td>
+		<td>54</td>
+		<td>0.9999960189</td>
+	</tr>
+	<tr>
+		<td>)</td>
+		<td>8</td>
+		<td>0.8415106808</td>
+		<td>X</td>
+		<td>55</td>
+		<td>0.9999968377</td>
+	</tr>
+	<tr>
+		<td>*</td>
+		<td>9</td>
+		<td>0.8741074588</td>
+		<td>Y</td>
+		<td>56</td>
+		<td>0.9999974881</td>
+	</tr>
+	<tr>
+		<td>+</td>
+		<td>10</td>
+		<td>0.9000000000</td>
+		<td>Z</td>
+		<td>57</td>
+		<td>0.9999980047</td>
+	</tr>
+	<tr>
+		<td>,</td>
+		<td>11</td>
+		<td>0.9205671765</td>
+		<td>[</td>
+		<td>58</td>
+		<td>0.9999984151</td>
+	</tr>
+	<tr>
+		<td>-</td>
+		<td>12</td>
+		<td>0.9369042656</td>
+		<td>&yen;</td>
+		<td>59</td>
+		<td>0.9999987411</td>
+	</tr>
+	<tr>
+		<td>.</td>
+		<td>13</td>
+		<td>0.9498812766</td>
+		<td>]</td>
+		<td>60</td>
+		<td>0.9999990000</td>
+	</tr>
+	<tr>
+		<td rowspan="6">2</td>
+		<td>/</td>
+		<td>14</td>
+		<td>0.9601892829</td>
+		<td>^</td>
+		<td>61</td>
+		<td>0.9999992057</td>
+	</tr>
+	<tr>
+		<td>0</td>
+		<td>15</td>
+		<td>0.9683772234</td>
+		<td>_</td>
+		<td>62</td>
+		<td>0.9999993690</td>
+	</tr>
+	<tr>
+		<td>1</td>
+		<td>16</td>
+		<td>0.9748811357</td>
+		<td>`</td>
+		<td>63</td>
+		<td>0.9999994988</td>
+	</tr>
+	<tr>
+		<td>2</td>
+		<td>17</td>
+		<td>0.9800473769</td>
+		<td>a</td>
+		<td>64</td>
+		<td>0.9999996019</td>
+	</tr>
+	<tr>
+		<td>3</td>
+		<td>18</td>
+		<td>0.9841510681</td>
+		<td>b</td>
+		<td>65</td>
+		<td>0.9999996838</td>
+	</tr>
+	<tr>
+		<td>4</td>
+		<td>19</td>
+		<td>0.9874107459</td>
+		<td>c</td>
+		<td>66</td>
+		<td>0.9999997488</td>
+	</tr>
+	<tr>
+		<td rowspan="5">7</td>
+		<td>5</td>
+		<td>20</td>
+		<td>0.9900000000</td>
+		<td>d</td>
+		<td>67</td>
+		<td>0.9999998005</td>
+	</tr>
+	<tr>
+		<td>6</td>
+		<td>21</td>
+		<td>0.9920567177</td>
+		<td>e</td>
+		<td>68</td>
+		<td>0.9999998415</td>
+	</tr>
+	<tr>
+		<td>7</td>
+		<td>22</td>
+		<td>0.9936904266</td>
+		<td>f</td>
+		<td>69</td>
+		<td>0.9999998741</td>
+	</tr>
+	<tr>
+		<td>8</td>
+		<td>23</td>
+		<td>0.9949881277</td>
+		<td>g</td>
+		<td>70</td>
+		<td>0.9999999000</td>
+	</tr>
+	<tr>
+		<td>9</td>
+		<td>24</td>
+		<td>0.9960189283</td>
+		<td>h</td>
+		<td>71</td>
+		<td>0.9999999206</td>
+	</tr>
+	<tr>
+		<td rowspan="5">&lt;</td>
+		<td>:</td>
+		<td>25</td>
+		<td>0.9968377223</td>
+		<td>i</td>
+		<td>72</td>
+		<td>0.9999999369</td>
+	</tr>
+	<tr>
+		<td>;</td>
+		<td>26</td>
+		<td>0.9974881136</td>
+		<td>j</td>
+		<td>73</td>
+		<td>0.9999999499</td>
+	</tr>
+	<tr>
+		<td>&lt;</td>
+		<td>27</td>
+		<td>0.9980047377</td>
+		<td>k</td>
+		<td>74</td>
+		<td>0.9999999602</td>
+	</tr>
+	<tr>
+		<td>=</td>
+		<td>28</td>
+		<td>0.9984151068</td>
+		<td>l</td>
+		<td>75</td>
+		<td>0.9999999684</td>
+	</tr>
+	<tr>
+		<td>&gt;</td>
+		<td>29</td>
+		<td>0.9987410746</td>
+		<td>m</td>
+		<td>76</td>
+		<td>0.9999999749</td>
+	</tr>
+	<tr>
+		<td rowspan="10">D</td>
+		<td>?</td>
+		<td>30</td>
+		<td>0.9990000000</td>
+		<td>n</td>
+		<td>77</td>
+		<td>0.9999999800</td>
+	</tr>
+	<tr>
+		<td>@</td>
+		<td>31</td>
+		<td>0.9992056718</td>
+		<td>o</td>
+		<td>78</td>
+		<td>0.9999999842</td>
+	</tr>
+	<tr>
+		<td>A</td>
+		<td>32</td>
+		<td>0.9993690427</td>
+		<td>p</td>
+		<td>79</td>
+		<td>0.9999999874</td>
+	</tr>
+	<tr>
+		<td>B</td>
+		<td>33</td>
+		<td>0.9994988128</td>
+		<td>q</td>
+		<td>80</td>
+		<td>0.9999999900</td>
+	</tr>
+	<tr>
+		<td>C</td>
+		<td>34</td>
+		<td>0.9996018928</td>
+		<td>r</td>
+		<td>81</td>
+		<td>0.9999999921</td>
+	</tr>
+	<tr>
+		<td>D</td>
+		<td>35</td>
+		<td>0.9996837722</td>
+		<td>s</td>
+		<td>82</td>
+		<td>0.9999999937</td>
+	</tr>
+	<tr>
+		<td>E</td>
+		<td>36</td>
+		<td>0.9997488114</td>
+		<td>t</td>
+		<td>83</td>
+		<td>0.9999999950</td>
+	</tr>
+	<tr>
+		<td>F</td>
+		<td>37</td>
+		<td>0.9998004738</td>
+		<td>u</td>
+		<td>84</td>
+		<td>0.9999999960</td>
+	</tr>
+	<tr>
+		<td>G</td>
+		<td>38</td>
+		<td>0.9998415107</td>
+		<td>v</td>
+		<td>85</td>
+		<td>0.9999999968</td>
+	</tr>
+	<tr>
+		<td>H</td>
+		<td>39</td>
+		<td>0.9998741075</td>
+		<td>w</td>
+		<td>86</td>
+		<td>0.9999999975</td>
+	</tr>
+	<tr>
+		<td rowspan="7">I</td>
+		<td>I</td>
+		<td>40</td>
+		<td>0.9999000000</td>
+		<td>x</td>
+		<td>87</td>
+		<td>0.9999999980</td>
+	</tr>
+	<tr>
+		<td>J</td>
+		<td>41</td>
+		<td>0.9999205672</td>
+		<td>y</td>
+		<td>88</td>
+		<td>0.9999999984</td>
+	</tr>
+	<tr>
+		<td>K</td>
+		<td>42</td>
+		<td>0.9999369043</td>
+		<td>z</td>
+		<td>89</td>
+		<td>0.9999999987</td>
+	</tr>
+	<tr>
+		<td>L</td>
+		<td>43</td>
+		<td>0.9999498813</td>
+		<td>{</td>
+		<td>90</td>
+		<td>0.9999999990</td>
+	</tr>
+	<tr>
+		<td>M</td>
+		<td>44</td>
+		<td>0.9999601893</td>
+		<td>|</td>
+		<td>91</td>
+		<td>0.9999999992</td>
+	</tr>
+	<tr>
+		<td>N</td>
+		<td>45</td>
+		<td>0.9999683772</td>
+		<td>}</td>
+		<td>92</td>
+		<td>0.9999999994</td>
+	</tr>
+	<tr>
+		<td>O</td>
+		<td>46</td>
+		<td>0.9999748811</td>
+		<td>~</td>
+		<td>93</td>
+		<td>0.9999999995</td>
+	</tr>
+</table>
+
+
+<br />
+<br />
+</div>
+
+</div></body>
+</html>
+
+<!-- 2015/06/19 -->
+

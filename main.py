@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import sys
 
 from config import DATA_DIR, INDEX_DIR, load_settings, show_env_status
@@ -21,7 +21,7 @@ from web_search import answer_from_web
 def configure_console_encoding():
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="replace")
+            stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 
 def parse_args():
@@ -38,7 +38,7 @@ def parse_args():
 
 def clean_console_input(value):
     value = "".join(ch for ch in value if not 0xD800 <= ord(ch) <= 0xDFFF)
-    return value.lstrip("\ufeff茂禄驴锝伙娇").strip()
+    return value.lstrip("﻿").strip()
 
 
 def normalize_asv_ids(question):
@@ -153,6 +153,7 @@ def answer_once(
         chat_model = build_chat_model(settings)
 
     # 1. Gather structured evidence — every backend always tries; none short-circuits.
+    print("[1/3] Searching tables & sequences...", flush=True)
     table_evidence = gather_table_data(question, DATA_DIR, chat_model=chat_model)
     sequence_evidence = gather_sequence_data(question, DATA_DIR, history=history, chat_model=chat_model)
     sample_evidence = gather_sample_data(question, DATA_DIR, chat_model=chat_model)
@@ -160,6 +161,7 @@ def answer_once(
     # 2. Gather RAG chunks (always when LLM/index available).
     rag_evidence = None
     if settings.get("OPENAI_API_KEY") and documents:
+        print("[2/3] Retrieving document chunks...", flush=True)
         if embeddings is None:
             embeddings = build_embedding_model(settings)
         rag_evidence = gather_rag_chunks(
@@ -205,6 +207,7 @@ def answer_once(
     if chat_model is None:
         answer = "Missing OPENAI_API_KEY. Add it to .env first.\n\nGathered evidence:\n" + render_evidence_block(entries)
     else:
+        print("[3/3] Composing answer...", flush=True)
         answer = compose_answer(question, entries, chat_model)
 
     print("\nEvidence sources:")
@@ -292,6 +295,7 @@ def main():
             print("No question provided.")
             continue
 
+        print("Thinking...", flush=True)
         search_question = make_standalone_question(question, history, chat_model)
         record = answer_once(
             search_question,

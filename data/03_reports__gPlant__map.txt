@@ -1,2 +1,0 @@
-#SampleID	Description
-dog-food-rbcL	1.dog-food-rbcL

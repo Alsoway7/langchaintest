@@ -642,7 +642,7 @@ def gather_table_data(question: str, data_dir, chat_model=None) -> dict | None:
             }
         )
 
-    if not any(r["source"] for r in marker_reports) and not marker_reports:
+    if not any(r["source"] for r in marker_reports):
         return None
 
     return {

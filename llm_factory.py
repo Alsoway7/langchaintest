@@ -8,7 +8,7 @@ def build_chat_model(settings: dict):
         return None
 
     return ChatOpenAI(
-        model=settings.get("OPENAI_MODEL") or "gpt-5.4-mini",
+        model=settings.get("OPENAI_MODEL") or "gpt-4o-mini",
         temperature=0,
         api_key=openai_key,
     )

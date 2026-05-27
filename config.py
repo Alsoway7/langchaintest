@@ -12,7 +12,7 @@ INDEX_DIR = BASE_DIR / ".rag_index"
 def load_settings():
     defaults = {
         "OPENAI_API_KEY": None,
-        "OPENAI_MODEL": "gpt-5.4-mini",
+        "OPENAI_MODEL": "gpt-4o-mini",
         "OPENAI_EMBEDDING_MODEL": "text-embedding-3-small",
     }
 
